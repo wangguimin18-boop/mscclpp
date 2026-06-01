@@ -26,5 +26,7 @@ target_link_libraries(mscclpp_py PRIVATE dlpack mscclpp mscclpp_collectives ${GP
 target_include_directories(mscclpp_py SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 if(MSCCLPP_USE_ROCM)
     target_compile_definitions(mscclpp_py PRIVATE MSCCLPP_USE_ROCM)
+elseif(MSCCLPP_USE_CANN)
+    target_compile_definitions(mscclpp_py PRIVATE MSCCLPP_USE_CANN)
 endif()
 install(TARGETS mscclpp_py LIBRARY DESTINATION .)
