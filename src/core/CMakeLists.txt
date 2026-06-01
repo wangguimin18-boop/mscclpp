@@ -1,11 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cc *.cpp *.cu)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cc *.cpp)
+
+if(MSCCLPP_USE_CUDA)
+    file(GLOB_RECURSE CU_SOURCES *.cu)
+    list(APPEND SOURCES ${CU_SOURCES})
+elseif(MSCCLPP_USE_ROCM)
+    file(GLOB_RECURSE CU_SOURCES *.cu)
+    list(APPEND SOURCES ${CU_SOURCES})
+endif()
 
 # Handle ROCm specific source property
 if(MSCCLPP_USE_ROCM)
-    file(GLOB_RECURSE CU_SOURCES *.cu)
     set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -49,6 +56,8 @@ elseif(MSCCLPP_USE_ROCM)
     foreach(arch ${MSCCLPP_GPU_ARCHS})
         target_compile_options(mscclpp_obj PRIVATE --offload-arch=${arch})
     endforeach()
+elseif(MSCCLPP_USE_CANN)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_CANN)
 endif()
 
 if(MSCCLPP_ENABLE_TRACE)

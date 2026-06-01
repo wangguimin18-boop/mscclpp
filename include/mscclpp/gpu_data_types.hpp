@@ -6,7 +6,76 @@
 
 #include <mscclpp/device.hpp>
 
-#if defined(MSCCLPP_DEVICE_HIP)
+#if defined(MSCCLPP_DEVICE_CANN)
+
+#include <acl/acl.h>
+
+struct __half {
+  uint16_t __x;
+  __half() = default;
+  MSCCLPP_HOST_DEVICE_INLINE explicit __half(float v) {
+    union { float f; uint32_t u; } src = {v};
+    uint32_t sign = src.u & 0x80000000u;
+    uint32_t abs = src.u & 0x7fffffffu;
+    if (abs > 0x477fe000u) { __x = sign >> 16 | 0x7c00u; }
+    else if (abs < 0x33000000u) { __x = 0; }
+    else {
+      uint32_t exp = abs >> 23;
+      uint32_t mant = abs & 0x7fffffu;
+      if (exp > 112) { __x = (sign >> 16) | ((exp - 112) << 10) | (mant >> 13); }
+      else { uint32_t shift = 125 - exp; __x = (sign >> 16) | (mant >> (shift + 2)) | (1u << (10 - shift)); }
+    }
+  }
+  MSCCLPP_HOST_DEVICE_INLINE operator float() const {
+    uint32_t sign = (__x & 0x8000u) << 16;
+    uint32_t exp = (__x & 0x7c00u) >> 10;
+    uint32_t mant = (__x & 0x03ffu);
+    uint32_t u;
+    if (exp == 0) { u = sign | (mant << 13); }
+    else if (exp == 31) { u = sign | 0x7f800000u | (mant << 13); }
+    else { u = sign | ((exp + 112) << 23) | (mant << 13); }
+    union { uint32_t i; float f; } cvt = {u};
+    return cvt.f;
+  }
+};
+
+struct __half2 {
+  __half x, y;
+  __half2() = default;
+  MSCCLPP_HOST_DEVICE_INLINE __half2(__half a, __half b) : x(a), y(b) {}
+};
+
+struct __bfloat16 {
+  uint16_t __x;
+  __bfloat16() = default;
+  MSCCLPP_HOST_DEVICE_INLINE explicit __bfloat16(float v) {
+    union { float f; uint32_t u; } src = {v};
+    uint32_t rounding_bias = (src.u >> 16) & 1;
+    __x = static_cast<uint16_t>((src.u + rounding_bias) >> 16);
+  }
+  MSCCLPP_HOST_DEVICE_INLINE operator float() const {
+    uint32_t u = static_cast<uint32_t>(__x) << 16;
+    union { uint32_t i; float f; } cvt = {u};
+    return cvt.f;
+  }
+};
+
+struct __bfloat162 {
+  __bfloat16 x, y;
+  __bfloat162() = default;
+  MSCCLPP_HOST_DEVICE_INLINE __bfloat162(__bfloat16 a, __bfloat16 b) : x(a), y(b) {}
+};
+
+#define __CUDA_BF16_TYPES_EXIST__
+
+MSCCLPP_HOST_DEVICE_INLINE __half __float2half_rn(float v) { return __half(v); }
+MSCCLPP_HOST_DEVICE_INLINE float __half2float(__half h) { return (float)h; }
+MSCCLPP_HOST_DEVICE_INLINE __half __hmax(__half a, __half b) { return __half(fmaxf((float)a, (float)b)); }
+MSCCLPP_HOST_DEVICE_INLINE __half __hmin(__half a, __half b) { return __half(fminf((float)a, (float)b)); }
+MSCCLPP_HOST_DEVICE_INLINE __bfloat16 __hmax(__bfloat16 a, __bfloat16 b) { return __bfloat16(fmaxf((float)a, (float)b)); }
+MSCCLPP_HOST_DEVICE_INLINE __bfloat16 __hmin(__bfloat16 a, __bfloat16 b) { return __bfloat16(fminf((float)a, (float)b)); }
+
+#elif defined(MSCCLPP_DEVICE_HIP)
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>

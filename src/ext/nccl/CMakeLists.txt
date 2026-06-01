@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cu *.cc *.cpp)
+if(MSCCLPP_USE_CANN)
+    file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cc *.cpp)
+else()
+    file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cu *.cc *.cpp)
+endif()
 file(GLOB_RECURSE AUDIT_SHIM CONFIGURE_DEPENDS audit-shim/*)
 
 if(MSCCLPP_USE_ROCM)
@@ -33,6 +37,8 @@ elseif(MSCCLPP_USE_ROCM)
     foreach(arch ${MSCCLPP_GPU_ARCHS})
         target_compile_options(mscclpp_nccl PRIVATE --offload-arch=${arch})
     endforeach()
+elseif(MSCCLPP_USE_CANN)
+    target_compile_definitions(mscclpp_nccl PRIVATE MSCCLPP_USE_CANN)
 endif()
 if(MSCCLPP_NPKIT_FLAGS)
     target_compile_definitions(mscclpp_nccl PRIVATE ${MSCCLPP_NPKIT_FLAGS})

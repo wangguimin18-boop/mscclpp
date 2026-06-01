@@ -8,14 +8,14 @@
 
 #include "api.h"
 
-// Convert a logical deviceId index to the NVML device minor number
+#if defined(MSCCLPP_DEVICE_CANN)
+#include <unistd.h>
+#include <limits.h>
+#endif
+
 static const std::string getBusId(int deviceId) {
-  // On most systems, the PCI bus ID comes back as in the 0000:00:00.0
-  // format. Still need to allocate proper space in case PCI domain goes
-  // higher.
   char busIdChar[] = "00000000:00:00.0";
   MSCCLPP_CUDATHROW(cudaDeviceGetPCIBusId(busIdChar, sizeof(busIdChar), deviceId));
-  // we need the hex in lower case format
   for (size_t i = 0; i < sizeof(busIdChar); i++) {
     busIdChar[i] = std::tolower(busIdChar[i]);
   }
@@ -25,8 +25,29 @@ static const std::string getBusId(int deviceId) {
 namespace mscclpp {
 
 MSCCLPP_API_CPP int getDeviceNumaNode(int deviceId) {
+#if defined(MSCCLPP_DEVICE_CANN)
+  // Ascend NPU 通过 sysfs 查找 NUMA 信息
+  // PCIe 连接的 NPU: /sys/class/davinci/davinci<d>/device 是 /sys/bus/pci/devices/<BDF> 的 symlink
+  // 读取该 symlink 目标获取真实 PCI BDF，再从 /sys/bus/pci/devices/<BDF>/numa_node 获取 NUMA
+  std::string devClassPath = "/sys/class/davinci/davinci" + std::to_string(deviceId) + "/device";
+  char realPath[PATH_MAX] = {};
+  if (realpath(devClassPath.c_str(), realPath) == nullptr) {
+    throw Error("Failed to resolve device path: " + devClassPath, ErrorCode::SystemError);
+  }
+  std::string pciBusId;
+  std::string rp(realPath);
+  // realPath 格式: /sys/devices/.../0000:XX:XX.X 或 /sys/bus/pci/devices/0000:XX:XX.X
+  size_t pos = rp.rfind('/');
+  if (pos != std::string::npos) {
+    pciBusId = rp.substr(pos + 1);
+  } else {
+    throw Error("Invalid device path format: " + rp, ErrorCode::SystemError);
+  }
+  std::string file_str = "/sys/bus/pci/devices/" + pciBusId + "/numa_node";
+#else
   std::string busId = getBusId(deviceId);
   std::string file_str = "/sys/bus/pci/devices/" + busId + "/numa_node";
+#endif
   std::ifstream file(file_str);
   int numaNode;
   if (file.is_open()) {

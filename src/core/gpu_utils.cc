@@ -9,6 +9,135 @@
 
 namespace mscclpp {
 
+#if defined(MSCCLPP_DEVICE_CANN)
+
+AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeGlobal), active_(false) {}
+
+AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() {}
+
+CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId), origDeviceId_(-1) {
+  if (deviceId_ >= 0) {
+    MSCCLPP_CUDATHROW(cudaGetDevice(&origDeviceId_));
+    if (origDeviceId_ != deviceId_) {
+      MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+    }
+  }
+}
+
+CudaDeviceGuard::~CudaDeviceGuard() {
+  if (deviceId_ >= 0 && origDeviceId_ >= 0 && origDeviceId_ != deviceId_) {
+    (void)cudaSetDevice(origDeviceId_);
+  }
+}
+
+CudaStreamWithFlags::CudaStreamWithFlags() : stream_(nullptr) { MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_)); }
+
+CudaStreamWithFlags::CudaStreamWithFlags(unsigned int flags) {
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
+}
+
+CudaStreamWithFlags::~CudaStreamWithFlags() {
+  if (!empty()) (void)cudaStreamDestroy(stream_);
+}
+
+void CudaStreamWithFlags::set(unsigned int flags) {
+  if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
+  CudaDeviceGuard deviceGuard(deviceId_);
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
+}
+
+bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
+
+GpuStream::GpuStream(std::shared_ptr<GpuStreamPool> pool, std::shared_ptr<CudaStreamWithFlags> stream)
+    : pool_(pool), stream_(stream) {}
+
+GpuStream::~GpuStream() { pool_->streams_[deviceId()].push_back(stream_); }
+
+GpuStreamPool::GpuStreamPool() {}
+
+GpuStream GpuStreamPool::getStream() {
+  int deviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  auto& streamVec = streams_[deviceId];
+  if (!streamVec.empty()) {
+    auto stream = streamVec.back();
+    streamVec.pop_back();
+    return GpuStream(gpuStreamPool(), stream);
+  }
+  return GpuStream(gpuStreamPool(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
+}
+
+void GpuStreamPool::clear() { streams_.clear(); }
+
+static std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
+
+std::shared_ptr<GpuStreamPool> gpuStreamPool() {
+  if (!gGpuStreamPool_) {
+    gGpuStreamPool_ = std::make_shared<GpuStreamPool>();
+  }
+  return gGpuStreamPool_;
+}
+
+namespace detail {
+
+int gpuIdFromAddress(void* ptr) {
+  (void)ptr;
+  return -1;
+}
+
+void setReadWriteMemoryAccess(void* base, size_t size) {
+  (void)base;
+  (void)size;
+}
+
+void* gpuCalloc(size_t bytes) {
+  void* ptr;
+  auto stream = gpuStreamPool()->getStream();
+  MSCCLPP_CUDATHROW(cudaMalloc(&ptr, bytes));
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, 0, bytes, stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+  return ptr;
+}
+
+void* gpuCallocHost(size_t bytes, unsigned int flags) {
+  void* ptr;
+  MSCCLPP_CUDATHROW(cudaHostAlloc(&ptr, bytes, flags));
+  ::memset(ptr, 0, bytes);
+  return ptr;
+}
+
+void gpuFree(void* ptr) { MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaFree(ptr)); }
+
+void gpuFreeHost(void* ptr) { MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaFreeHost(ptr)); }
+
+void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream, cudaMemcpyKind kind) {
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, bytes, kind, stream));
+}
+
+void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind) {
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, bytes, kind, stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+}
+
+void gpuMemset(void* ptr, int value, size_t bytes) {
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, value, bytes, stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+}
+
+}  // namespace detail
+
+bool isNvlsSupported() { return false; }
+
+bool isCuMemMapAllocated(void* ptr) {
+  (void)ptr;
+  return false;
+}
+
+#else  // !defined(MSCCLPP_DEVICE_CANN)
+
 AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeRelaxed), active_(true) {
   cudaError_t res = cudaThreadExchangeStreamCaptureMode(&mode_);
   if (isCudaTeardownError(res)) {
@@ -312,5 +441,7 @@ bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
   return true;
 #endif
 }
+
+#endif  // !defined(MSCCLPP_DEVICE_CANN)
 
 }  // namespace mscclpp

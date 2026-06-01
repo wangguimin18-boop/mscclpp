@@ -11,20 +11,31 @@
 
 namespace mscclpp {
 
-/// Check if a CUDA error indicates runtime teardown (safe to ignore in destructors).
+#if defined(MSCCLPP_DEVICE_CANN)
+
+inline bool isCudaTeardownError(cudaError_t err) {
+  return err == ACL_ERROR_RT_INTERNAL_ERROR || err == ACL_ERROR_RT_NO_DEVICE ||
+         static_cast<int>(err) >= 1000;
+}
+
+inline bool isCuTeardownError(CUresult r) { return isCudaTeardownError(r); }
+
+#else
+
 inline bool isCudaTeardownError(cudaError_t err) {
 #if defined(MSCCLPP_USE_ROCM)
   return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
-#else   // !defined(MSCCLPP_USE_ROCM)
+#else
   return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
          err == cudaErrorInvalidDevice || err == cudaErrorLaunchFailure || err == cudaErrorDeviceUninitialized;
-#endif  // !defined(MSCCLPP_USE_ROCM)
+#endif
 }
 
-/// Check if a CUDA driver error indicates runtime teardown.
 inline bool isCuTeardownError(CUresult r) {
   return r == CUDA_ERROR_DEINITIALIZED || r == CUDA_ERROR_CONTEXT_IS_DESTROYED || r == CUDA_ERROR_LAUNCH_FAILED;
 }
+
+#endif
 
 }  // namespace mscclpp
 
@@ -56,7 +67,7 @@ inline bool isCuTeardownError(CUresult r) {
     CUresult __e = cmd;                                                                               \
     if (__e != CUDA_SUCCESS) {                                                                        \
       const char* errStr;                                                                             \
-      cuGetErrorString(__e, &errStr);                                                                 \
+      cuGetErrorString(&__e, &errStr);                                                                \
       WARN(GPU, __FILE__, ":", __LINE__, " Cuda failure ", static_cast<int>(__e), " '", errStr, "'"); \
     }                                                                                                 \
   } while (false)

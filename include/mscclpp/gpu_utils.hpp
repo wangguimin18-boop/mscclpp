@@ -352,9 +352,11 @@ class GpuBuffer {
     bytes_ = nelems * sizeof(T);
 #if defined(__HIP_PLATFORM_AMD__)
     memory_ = detail::gpuCallocUncachedShared<T>(nelems);
-#else   // !defined(__HIP_PLATFORM_AMD__)
+#elif defined(MSCCLPP_DEVICE_CANN)
     memory_ = detail::gpuCallocShared<T>(nelems);
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(__HIP_PLATFORM_AMD__) && !defined(MSCCLPP_DEVICE_CANN)
+    memory_ = detail::gpuCallocShared<T>(nelems);
+#endif
   }
 
   /// Returns the number of elements in the allocated memory.
