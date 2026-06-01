@@ -9,6 +9,10 @@
 #if defined(MSCCLPP_DEVICE_CANN)
 
 #include <acl/acl.h>
+#include <unistd.h>
+#include <limits.h>
+#include <string>
+#include <algorithm>
 
 using cudaError_t = aclError;
 using cudaEvent_t = aclrtNotify;
@@ -422,17 +426,25 @@ inline cudaError_t cudaDeviceGetAttribute(int* val, cudaDevice_attribute attr, i
 }
 
 inline cudaError_t cudaDeviceGetPCIBusId(char* busId, int len, int device) {
-  // CANN 无 PCI Bus ID 查询接口
-  // PCIe 连接的 Ascend NPU 在 /sys/bus/pci/devices/ 下有 PCI BDF
-  // 通过 /dev/davinci<device> → /sys/class/davinci<d>/device 路径获取真实 PCI 地址
-  // 此处返回设备标识符用于日志打印，NUMA 查询不应依赖此返回值
-  int64_t chipId = 0;
-  aclError ret = aclrtGetDeviceInfo(static_cast<uint32_t>(device), ACL_DEV_ATTR_PHY_CHIP_ID, &chipId);
-  if (ret != ACL_SUCCESS) {
-    strncpy(busId, "0000:00:00.0", len);
-    return ret;
+  // Ascend NPU has no direct PCI Bus ID query API.
+  // Resolve real PCI BDF via sysfs: /sys/class/davinci/davinci<d>/device → symlink to /sys/bus/pci/devices/<BDF>
+  // Returns standard PCI BDF format "XXXX:XX:XX.X" so downstream code (NUMA lookup, logging) works unchanged.
+  std::string devClassPath = "/sys/class/davinci/davinci" + std::to_string(device) + "/device";
+  char realPath[PATH_MAX] = {};
+  if (realpath(devClassPath.c_str(), realPath) != nullptr) {
+    std::string rp(realPath);
+    size_t pos = rp.rfind('/');
+    if (pos != std::string::npos) {
+      std::string pciBdf = rp.substr(pos + 1);
+      snprintf(busId, len, "%s", pciBdf.c_str());
+      for (int i = 0; i < len && busId[i]; i++) {
+        busId[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(busId[i])));
+      }
+      return ACL_SUCCESS;
+    }
   }
-  snprintf(busId, len, "ascend:%lld", static_cast<long long>(chipId));
+  // Fallback: sysfs unavailable, return placeholder
+  strncpy(busId, "0000:00:00.0", len);
   return ACL_SUCCESS;
 }
 
